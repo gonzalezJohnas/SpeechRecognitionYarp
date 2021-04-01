@@ -16,7 +16,6 @@ def info(msg):
 
 
 
-
 class SpeechToTextModule(yarp.RFModule):
     """
     Description:
@@ -87,7 +86,8 @@ class SpeechToTextModule(yarp.RFModule):
         # Speech recognition parameters
         self.threshold_voice = rf.check("voice_threshold",
                                     yarp.Value("4"),
-                                    "Engery threshold use by the VAD (int)").asInt()
+                                    "Energy threshold use by the VAD (int)").asDouble()
+
         self.speech_recognizer = sr.Recognizer()
 
         # Actions list
@@ -159,6 +159,19 @@ class SpeechToTextModule(yarp.RFModule):
 
             reply.addString("ok")
 
+        elif command.get(0).asString() == "set":
+            if command.get(1).asString() == "thr":
+                self.threshold_voice = command.get(2).asDouble()
+                reply.addString("ok")
+            else:
+                reply.addString("nack")
+
+        elif command.get(0).asString() == "get":
+            if command.get(1).asString() == "thr":
+                reply.addDouble(self.threshold_voice)
+
+            else:
+                reply.addString("nack")
         return True
 
     def getPeriod(self):
@@ -206,7 +219,7 @@ class SpeechToTextModule(yarp.RFModule):
                     self.voice_detected = True
                 info("Voice detected")
 
-            elif audio_power < (self.threshold_voice/2):
+            elif audio_power < (self.threshold_voice/2) and self.voice_detected:
                 info(" Stop voice")
                 np_audio = np.concatenate(self.audio, axis=1)
                 np_audio = librosa.util.normalize(np_audio, axis=1)
@@ -216,6 +229,7 @@ class SpeechToTextModule(yarp.RFModule):
 
                 recognized_text = self.speech_to_text()
                 if len(recognized_text):
+                    self.write_text(recognized_text)
                     self.recognize_actions(recognized_text)
 
                 self.voice_detected = False
@@ -242,6 +256,13 @@ class SpeechToTextModule(yarp.RFModule):
             if keyword in input_speech.lower():
                 return self.send_actions(action_name)
 
+    def write_text(self, text):
+        if self.speech_output.getOutputCount():
+            action_bottle = yarp.Bottle()
+            action_bottle.clear()
+
+            action_bottle.addString(text)
+            self.speech_output.write(action_bottle)
 
 
     def send_actions(self, actions_name):
