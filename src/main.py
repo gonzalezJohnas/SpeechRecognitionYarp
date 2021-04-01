@@ -87,7 +87,7 @@ class SpeechToTextModule(yarp.RFModule):
         # Speech recognition parameters
         self.threshold_voice = rf.check("voice_threshold",
                                     yarp.Value("4"),
-                                    "Engery threshold use by the VAD (int)").asInt()
+                                    "Engery threshold use by the VAD (int)").asDouble()
         self.speech_recognizer = sr.Recognizer()
 
         # Actions list
@@ -183,13 +183,14 @@ class SpeechToTextModule(yarp.RFModule):
 
 
     def get_power(self):
-        max_power = 0
+        max_power = 0.0
         if self.audio_power_port.getInputCount():
 
             power_matrix = yarp.Matrix()
-            power_matrix = self.audio_power_port.read()
+            self.audio_power_port.read(power_matrix)
             power_values = [power_matrix[0, 1], power_matrix[0, 0]]
             max_power = np.max(power_values)
+            info("Max power is {}".format(max_power))
 
         return max_power
 
@@ -206,7 +207,7 @@ class SpeechToTextModule(yarp.RFModule):
                     self.voice_detected = True
                 info("Voice detected")
 
-            elif audio_power < (self.threshold_voice/2):
+            elif audio_power < (self.threshold_voice/2.0) and self.voice_detected:
                 info(" Stop voice")
                 np_audio = np.concatenate(self.audio, axis=1)
                 np_audio = librosa.util.normalize(np_audio, axis=1)

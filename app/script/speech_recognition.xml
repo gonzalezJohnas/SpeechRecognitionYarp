@@ -1,0 +1,98 @@
+<application>
+
+    <name> SpeechRecognitionActions </name>
+
+    <!-->  
+    MODULES.    
+    <!-->
+    <module>
+        <name> remoteInterface </name>
+        <parameters> </parameters>
+        <node> icub-head </node>
+    </module>
+
+    <module>
+        <name> audioPreprocessor </name>
+        <parameters> </parameters>
+        <node> icubsrv </node>
+    </module>
+
+
+    <module>
+        <name> remoteInterface_nc </name>
+        <parameters> </parameters>
+        <node> icubsrv </node>
+    </module>
+
+
+
+<module>
+                <name>interactionInterface</name>
+		<parameters> --context icub-interaction-demos  --config icub_demos.sh </parameters>
+                <node>icubsrv</node>                
+        </module>
+      
+        <module>
+                <name>ctpService</name>
+		<parameters>--robot icub --part right_arm</parameters>
+                <node>icubsrv</node>                
+        </module>
+
+        <module>
+                <name>ctpService</name>
+		<parameters>--robot icub --part left_arm</parameters>
+                <node>icubsrv</node>                
+        </module>
+   
+   
+
+	<module>
+                <name>ctpService</name>
+		<parameters>--robot icub --part torso</parameters>
+                <node>icubsrv</node>                
+        </module>
+
+    <module>
+        <name> SpeechRecognition </name>
+        <parameters> --from /home/icub/Documents/Jonas/SpeechRecognitionYarp/app/conf/SpeechRecognition.ini</parameters>
+        <node> icubsrv </node>
+    </module>
+
+
+    <!-->  
+    CONNECTIONS.
+    <!-->
+    <connection>
+        <from> /rawAudio:o  </from>
+        <to>   /rawAudio:i </to>
+        <protocol> tcp </protocol>
+    </connection>
+
+    <connection>
+        <from> /rawAudio:o  </from>
+        <to>   /SpeechToText/speech:i </to>
+        <protocol> tcp </protocol>
+    </connection>
+
+   <connection>
+        <from> /rawAudioNC:o  </from>
+        <to>   /audioPreprocessor/rawAudio:i    </to>
+        <protocol> tcp </protocol>
+    </connection>
+
+
+    <connection>
+        <from> /audioPreprocessor/rawPower:o </from>
+        <to>   /SpeechToText/power:i    </to>
+        <protocol> tcp </protocol>
+    </connection>
+
+    <connection>
+        <from> /SpeechToText/actions:o </from>
+        <to>   /interactionInterface      </to>
+        <protocol> tcp </protocol>
+    </connection>
+
+  
+
+</application>
