@@ -43,7 +43,7 @@ add_custom_command(
 add_custom_command(
         OUTPUT binary
         DEPENDS ${NAME_VENV} requirements
-        COMMAND ./${NAME_VENV}/bin/pyinstaller  --onefile ${CMAKE_CURRENT_SOURCE_DIR}/main.py --distpath bin -n SpeechRecognitionYarp
+        COMMAND ./${NAME_VENV}/bin/pyinstaller  --onefile ${CMAKE_CURRENT_SOURCE_DIR}/main.py --distpath bin -n SpeechRecognition
 
 )
 
