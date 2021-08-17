@@ -16,7 +16,7 @@ from utils import frame_generator, read_wave
 def info(msg):
     print("[INFO] {}".format(msg))
 
-
+LANGUAGE_CODE = ["it-IT, en-EN, es-ES, fr-FR"]
 
 class SpeechToTextModule(yarp.RFModule):
     """
@@ -76,6 +76,9 @@ class SpeechToTextModule(yarp.RFModule):
         self.saving_path = rf.check("path",
                                     yarp.Value("/tmp"),
                                     "saving path name (string)").asString()
+        self.language  = rf.check("lang",
+                                    yarp.Value("it-IT"),
+                                    "Language for the Google speech API (string)").asString()
 
 
         # Opening Ports
@@ -165,6 +168,8 @@ class SpeechToTextModule(yarp.RFModule):
 
             reply.addString("start : Start the recording")
             reply.addString("stop : Stop the recording")
+            reply.addString("set lang : Change the language for the Google Speech API")
+            reply.addString("set thr : Set the threshold for the VAD")
 
         elif command.get(0).asString() == "start":
             if self.audio_in_port.getInputCount():
@@ -191,6 +196,11 @@ class SpeechToTextModule(yarp.RFModule):
                 reply.addString("ok")
             elif command.get(1).asString() == "lang":
                 self.language = command.get(2).asString()
+                reply.addString("ok")
+            if command.get(1).asString() == "lang":
+                lang_to_set = command.get(2).asString()
+                if lang_to_set in LANGUAGE_CODE:
+                    self.language = lang_to_set
                 reply.addString("ok")
             else:
                 reply.addString("nack")
