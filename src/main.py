@@ -1,3 +1,4 @@
+from numpy.core.fromnumeric import std
 import librosa
 import speech_recognition as sr
 
@@ -7,6 +8,7 @@ import time
 import yarp
 import numpy as np
 import soundfile as sf
+import scipy.io.wavfile as wavfile
 
 from utils import frame_generator, read_wave
 
@@ -31,6 +33,10 @@ class SpeechToTextModule(yarp.RFModule):
 
         # Voice activity parameters
         self.threshold_voice = None
+        self.threshold_voice_low = None
+        self.calib = False
+        self.stop_voice_counter = 0
+
         self.voice_detected = False
 
         # handle port for the RFModule
@@ -41,22 +47,24 @@ class SpeechToTextModule(yarp.RFModule):
 
         # Define vars to receive an sound
         self.audio_in_port = yarp.BufferedPortSound()
-        self.audio_power_port = yarp.Port()
+        self.audio_power_port = yarp.BufferedPortBottle()
 
         self.sample_rate = 48000
         self.sound = yarp.Sound()
         self.audio = []
-        self.record = True
+        self.record = None
         self.np_audio = None
 
         # Define a port to send a speech
         self.speech_output = yarp.Port()
         self.actions_output = yarp.Port()
+        self.emotions_output = yarp.Port()
+
         self.actions_list = {}
 
         # Speech-recognition parameters
         self.speech_recognizer = None
-        self.language = "it-IT"
+        self.language = ""
 
     def configure(self, rf):
 
@@ -78,15 +86,30 @@ class SpeechToTextModule(yarp.RFModule):
         self.audio_in_port.open('/' + self.module_name + '/speech:i')
         self.audio_power_port.open('/' + self.module_name + '/power:i')
 
+        self.audio_in_port.setStrict(True)
+
         # Speech
         self.speech_output.open('/' + self.module_name + '/speech:o')
+
+        # Actions and emotions
         self.actions_output.open('/' + self.module_name + '/actions:o')
+        self.emotions_output.open('/' + self.module_name + '/emotions:o')
 
 
         # Speech recognition parameters
         self.threshold_voice = rf.check("voice_threshold",
                                     yarp.Value("4"),
                                     "Energy threshold use by the VAD (int)").asDouble()
+        self.threshold_voice_low = self.threshold_voice / 2
+
+        self.language = rf.check("lang",
+                                    yarp.Value("it-IT"),
+                                    "Energy threshold use by the VAD (int)").asString()
+
+        self.record = rf.check("auto_start",
+                                    yarp.Value(True),
+                                    "Start the module automatically (bool)").asBool()
+
 
         self.speech_recognizer = sr.Recognizer()
 
@@ -148,6 +171,7 @@ class SpeechToTextModule(yarp.RFModule):
                 self.audio = []
                 self.record = True
                 info("starting recording!")
+                self.audio_in_port.resume()
 
                 reply.addString("ok")
             else:
@@ -156,22 +180,37 @@ class SpeechToTextModule(yarp.RFModule):
         elif command.get(0).asString() == "stop":
             info("stopping recording!")
             self.record = False
-
+            self.audio_in_port.interrupt()
             reply.addString("ok")
 
         elif command.get(0).asString() == "set":
             if command.get(1).asString() == "thr":
                 self.threshold_voice = command.get(2).asDouble()
+                self.threshold_voice_low = self.threshold_voice / 2
+
+                reply.addString("ok")
+            elif command.get(1).asString() == "lang":
+                self.language = command.get(2).asString()
                 reply.addString("ok")
             else:
                 reply.addString("nack")
 
+        elif command.get(0).asString() == "calib":
+            self.calib = True         
+            reply.addString("ok")
+
         elif command.get(0).asString() == "get":
             if command.get(1).asString() == "thr":
                 reply.addDouble(self.threshold_voice)
-
+            elif command.get(1).asString() == "lang":
+                reply.addString(self.language)
             else:
                 reply.addString("nack")
+        
+        else:
+            reply.addString("nack")
+        
+        
         return True
 
     def getPeriod(self):
@@ -180,55 +219,94 @@ class SpeechToTextModule(yarp.RFModule):
 
            Returns : The period of the module in seconds.
         """
-        return 0.05
+        return 0.01
 
-    def record_audio(self):
-        self.sound = self.audio_in_port.read(False)
-        if self.sound:
+    def record_audio(self, blocking=False):
+        while(self.audio_in_port.getPendingReads()):
+            self.sound = self.audio_in_port.read(blocking)
+            if self.sound:
 
-            chunk = np.zeros((self.sound.getChannels(), self.sound.getSamples()), dtype=np.float32)
+                chunk = np.zeros((self.sound.getChannels(), self.sound.getSamples()), dtype=np.float32)
 
-            for c in range(self.sound.getChannels()):
-                for i in range(self.sound.getSamples()):
-                    chunk[c][i] = self.sound.get(i, c) / 32768.0
+                for c in range(self.sound.getChannels()):
+                    for i in range(self.sound.getSamples()):
+                        chunk[c][i] = self.sound.get(i, c) / 32768.0
 
-            self.audio.append(chunk)
+                self.audio.append(chunk)
+
+
+    def calibrate_power(self):
+
+        power_values = np.zeros(50, dtype=np.float32)
+        val_read = 0
+
+        while(val_read < 50):
+
+            power = self.get_power()
+            if power > 0:
+
+                power_values[val_read] = power
+
+                val_read += 1
+        
+        mean_power = power_values.mean()
+        std_power = power_values.std()
+        
+        self.threshold_voice = mean_power + 10 *std_power
+        self.threshold_voice_low = mean_power 
+
+        info("Mean stds: {} {}".format(mean_power, std_power))
+        info("New threshold values: {} {}".format(self.threshold_voice_low, self.threshold_voice))
 
 
     def get_power(self):
-        max_power = 0.0
+        max_power = -1
         if self.audio_power_port.getInputCount():
+            power_matrix = self.audio_power_port.read(False)
+            if power_matrix:
 
-            power_matrix = yarp.Matrix()
-            self.audio_power_port.read(power_matrix)
-            power_values = [power_matrix[0, 1], power_matrix[0, 0]]
-            max_power = np.max(power_values)
-            info("Max power is {}".format(max_power))
+                power_matrix = power_matrix.get(2).asList()
+                power_values = [power_matrix.get(0).asDouble(), power_matrix.get(1).asDouble()]
+                max_power = np.max(power_values)
+                if max_power < self.threshold_voice_low and self.voice_detected:
+                    self.stop_voice_counter += 1
 
         return max_power
 
     def updateModule(self):
-
+       
         if self.record:
+            if self.calib:
+                self.calibrate_power()
+                self.calib = False
+
 
             self.record_audio()
-            audio_power = self.get_power()
 
-            if audio_power > self.threshold_voice:
-                if not self.voice_detected:
-                    self.audio = self.audio[-10:]
-                    self.voice_detected = True
+      
+            audio_power = self.get_power()
+            info("Max power is {}".format(audio_power))
+
+            if audio_power > self.threshold_voice and not self.voice_detected:
+                self.audio = self.audio[-4:]
+                self.voice_detected = True
                 info("Voice detected")
 
-            elif audio_power < (self.threshold_voice/2) and self.voice_detected:
+            elif self.stop_voice_counter > 10 and self.voice_detected:
+                self.send_emotions('hap')
+                self.stop_voice_counter = 0
+                self.record_audio()
+
 
                 info(" Stop voice")
                 np_audio = np.concatenate(self.audio, axis=1)
                 np_audio = librosa.util.normalize(np_audio, axis=1)
                 np_audio = np.squeeze(np_audio)
                 signal = np.transpose(np_audio, (1, 0))
-                sf.write(self.saving_path + '/speech.wav', signal, self.sample_rate)
+                #sf.write(self.saving_path + '/speech.wav', signal, self.sample_rate)
+                signal = (np.iinfo(np.int32).max * (signal/np.abs(signal).max())).astype(np.int32)
 
+                wavfile.write(self.saving_path + '/speech.wav', self.sample_rate, signal)
                 recognized_text = self.speech_to_text()
                 if len(recognized_text):
                     self.write_text(recognized_text)
@@ -248,6 +326,7 @@ class SpeechToTextModule(yarp.RFModule):
             transcript = self.speech_recognizer.recognize_google(audio, language=self.language, )
         except sr.UnknownValueError:
             info("Google Speech Recognition could not understand audio")
+            self.send_emotions('cun')
 
         info("Google Speech Recognition thinks you said " + transcript)
 
@@ -279,6 +358,21 @@ class SpeechToTextModule(yarp.RFModule):
 
             return True
         return False
+
+    def send_emotions(self, emotion):
+        if self.emotions_output.getOutputCount():
+            emo_bottle = yarp.Bottle()
+            emo_bottle.clear()
+
+            emo_bottle.addString('set')
+            emo_bottle.addString('all')
+            emo_bottle.addString(emotion)
+
+
+            self.emotions_output.write(emo_bottle)
+
+            return True
+        return False    
 
 
 
